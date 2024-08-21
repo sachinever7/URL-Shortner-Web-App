@@ -1,48 +1,91 @@
-function doPost(e) {
-    // Check if the body exists
-    if (!e.postData.contents) {
-        return ContentService.createTextOutput(JSON.stringify({
-            Message_Sent: false,
-            error: "No Event Body Found"
-        })).setMimeType(ContentService.MimeType.JSON);
-    }
+//slack send-slack-message.sh
+#!/bin/bash
 
-    // Extract and decode Base64-encoded body
-    const base64EncodedBody = e.postData.contents;
-    const decodedBody = Utilities.newBlob(Utilities.base64Decode(base64EncodedBody)).getDataAsString();
+SLACK_TOKEN="xoxb-your-slack-bot-token"
+SLACK_CHANNEL_ID="your-slack-channel-id"
 
-    // Parse the decoded string as URL-encoded data
-    const parsedBody = decodeURIComponent(decodedBody);
-    const data = parsedBody.split('&').reduce((acc, pair) => {
-        const [key, value] = pair.split('=');
-        acc[key] = value;
-        return acc;
-    }, {});
+send_slack_message() {
+    local message="$1"
+    local thread_ts="$2"
+    
+    # Construct the JSON payload
+    local payload="{\"channel\":\"$SLACK_CHANNEL_ID\", \"text\":\"$message\""
+    
+    # If thread_ts is provided, include it in the payload
+    if [ -n "$thread_ts" ]; then
+        payload+=", \"thread_ts\":\"$thread_ts\""
+    fi
+    
+    payload+="}"
 
-    console.log("Payload is:", data);
-
-    // Extract parameters from the parsed body
-    let msgText = data.text || 'No message text';
-    let url = data.url || 'No URL';
-
-    // Process the data (you can call other functions or handle the data as needed)
-    let res = getTimestampFromUrlandSendmsg(msgText, url);
-
-    // Return response
-    return ContentService.createTextOutput(JSON.stringify({
-        Message_Sent: res
-    })).setMimeType(ContentService.MimeType.JSON);
+    # Send the message via Slack API
+    curl -X POST -H "Authorization: Bearer $SLACK_TOKEN" -H "Content-type: application/json" \
+    --data "$payload" \
+    https://slack.com/api/chat.postMessage
 }
 
-/**
- * Simulated function to process the data.
- * @param {string} msgText - The message text.
- * @param {string} url - The URL.
- * @return {boolean} - Status of message sending.
- */
-function getTimestampFromUrlandSendmsg(msgText, url) {
-    // Your logic to handle msgText and url goes here
-    console.log(`Message Text: ${msgText}`);
-    console.log(`URL: ${url}`);
-    return true; // Simulate successful processing
+# Example usage:
+# To send a standalone message
+./your-script.sh "This is a standalone message."
+
+# To send a message as part of a thread
+./your-script.sh "This is a threaded message." "1681234567.000000"
+
+
+
+
+
+
+
+////get-total-hits.sh
+#!/bin/bash
+
+ELASTICSEARCH_API_ROOT="http://elastic.staging-01.maidy.io.internal:9200"
+
+get_total_hits() {
+    local query_url="$ELASTICSEARCH_API_ROOT/maidypayments_v1/maidypayments/_search?size=1&sort=created_at:asc&q=merchant_id:mer_YB1R3WwohY4AJeYG%20AND%20test:false%20AND%20status:authenticated"
+    local total_hits=$(curl --silent "$query_url" | jq '.hits.total')
+    echo $total_hits
 }
+
+
+#get_total_hits
+
+
+
+
+
+
+
+////////////////// main.sh
+
+#!/bin/bash
+
+# Step 1: Get total hits before processing
+total_hits_before=$(bash get-total-hits.sh)
+
+# Step 2: Process transactions (ascending order)
+bash process-transactions.sh "asc" | while read line; do
+    bash complete-transactions.sh "$line"
+done
+
+# Step 3: If hits > 2000, process descending transactions
+if [ "$total_hits_before" -gt 2000 ]; then
+    bash process-transactions.sh "desc" | while read line; do
+        bash complete-transactions.sh "$line"
+    done
+fi
+
+# Step 4: If hits > 10000, process additional descending transactions
+if [ "$total_hits_before" -gt 10000 ]; then
+    bash get-descending-transactions-that-can-be-completed.sh | while read line; do
+        bash complete-transactions.sh "$line"
+    done
+fi
+
+# Step 5: Get total hits after processing
+total_hits_after=$(bash get-total-hits.sh)
+
+# Step 6: Send the results to Slack
+message="Total hits before processing: $total_hits_before\nTotal hits after processing: $total_hits_after"
+bash send-slack-message.sh "$message"
